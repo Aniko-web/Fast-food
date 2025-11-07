@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Bot tokenini kiriting
 BOT_TOKEN = "8415377244:AAEO5bHjGqAKSgi4DK6vn1zEqYkTwEFASY8"
-ADMIN_ID = 6534784826  # Admin Telegram ID sini kiriting
+ADMIN_ID = 6227963027  # Admin Telegram ID sini kiriting
 
 # Bot va Dispatcher
 bot = Bot(token=BOT_TOKEN)
@@ -616,4 +616,5 @@ async def main():
 
 
 if __name__ == "__main__":
+
     asyncio.run(main())
