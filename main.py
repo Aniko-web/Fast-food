@@ -415,7 +415,10 @@ async def category_handler(callback: CallbackQuery):
         "Mahsulotni tanlang 👇",
         reply_markup=products_keyboard(category)
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("add_"))
@@ -429,7 +432,10 @@ async def add_product(callback: CallbackQuery):
     name, emoji = cur.fetchone()
     conn.close()
 
-    await callback.answer(f"✅ {emoji} {name} savatchaga qo'shildi!", show_alert=True)
+    try:
+        await callback.answer(f"✅ {emoji} {name} savatchaga qo'shildi!", show_alert=True)
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "view_cart")
@@ -452,7 +458,10 @@ async def view_cart(callback: CallbackQuery):
 
     text += f"\n💰 Jami: {total:,} so'm".replace(',', ' ')
     await callback.message.edit_text(text, reply_markup=cart_keyboard())
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "clear_cart")
@@ -463,14 +472,20 @@ async def clear_cart_handler(callback: CallbackQuery):
         "Menyuga qaytish uchun tugmani bosing 👇",
         reply_markup=main_menu_keyboard()
     )
-    await callback.answer("Savatcha tozalandi!")
+    try:
+        await callback.answer("Savatcha tozalandi!")
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "confirm_order")
 async def confirm_order_handler(callback: CallbackQuery, state: FSMContext):
     items = get_cart(callback.from_user.id)
     if not items:
-        await callback.answer("Savatcha bo'sh!", show_alert=True)
+        try:
+            await callback.answer("Savatcha bo'sh!", show_alert=True)
+        except Exception:
+            pass
         return
 
     # Buyurtma ma'lumotlarini state ga saqlash
@@ -483,33 +498,42 @@ async def confirm_order_handler(callback: CallbackQuery, state: FSMContext):
         "(masalan: +998901234567)",
         reply_markup=contact_keyboard()
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "pay_card")
 async def payment_card(callback: CallbackQuery, state: FSMContext):
     await state.set_state(OrderStates.waiting_for_card_number)
-
+    
     await callback.message.answer(
         "💳 Plastik karta to'lovini tanladingiz\n\n"
         "Iltimos, karta raqamingizni kiriting:\n"
         "(masalan: 8600 1234 5678 9012)",
         reply_markup=skip_keyboard()
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "pay_cash")
 async def payment_cash(callback: CallbackQuery, state: FSMContext):
     await state.update_data(payment_method="naqd", card_number=None)
     await state.set_state(OrderStates.waiting_for_location)
-
+    
     await callback.message.answer(
         "💵 Naqd pul to'lovini tanladingiz\n\n"
         "📍 Endi yetkazib berish manzilini yuboring:",
         reply_markup=location_keyboard()
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "cancel_order")
@@ -520,7 +544,10 @@ async def cancel_order_callback(callback: CallbackQuery, state: FSMContext):
         "Menyuga qaytish uchun quyidagi tugmani bosing 👇",
         reply_markup=main_menu_keyboard()
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "back_menu")
@@ -530,7 +557,10 @@ async def back_to_menu(callback: CallbackQuery):
         "Quyidagilardan birini tanlang 👇",
         reply_markup=main_menu_keyboard()
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 # ============= CONTACT VA PAYMENT HANDLERS =============
@@ -595,7 +625,7 @@ async def process_card_number(message: Message, state: FSMContext):
         return
 
     card_number = message.text.strip()
-
+    
     # Karta raqamni oddiy tekshirish
     card_digits = ''.join(filter(str.isdigit, card_number))
     if len(card_digits) < 16:
@@ -678,9 +708,8 @@ async def process_location(message: Message, state: FSMContext):
     # Ma'lumotlar bazasiga saqlash
     conn = sqlite3.connect('fastfood.db')
     cur = conn.cursor()
-    cur.execute(
-        """INSERT INTO orders (user_id, username, phone, items, total, date, status, payment_method, card_number)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    cur.execute("""INSERT INTO orders (user_id, username, phone, items, total, date, status, payment_method, card_number)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (message.from_user.id,
                  message.from_user.username or "Noma'lum",
                  phone,
@@ -715,23 +744,23 @@ async def process_location(message: Message, state: FSMContext):
             f"📱 Tel: {phone}\n"
             f"💳 To'lov: {payment_text}\n"
         )
-
+        
         if payment_method == "karta" and card_number:
             admin_text += f"💳 Karta: {card_number}\n"
-
+        
         admin_text += f"\n{order_text}"
-
+        
         await bot.send_message(ADMIN_ID, admin_text)
         await bot.send_location(ADMIN_ID, location.latitude, location.longitude)
-
+        
         # Agar chek yuborilgan bo'lsa, uni ham adminga yuborish
         if receipt_photo:
             await bot.send_photo(
-                ADMIN_ID,
+                ADMIN_ID, 
                 receipt_photo,
                 caption=f"📸 To'lov cheki - Buyurtma #{order_id}"
             )
-
+        
         logging.info(f"Buyurtma #{order_id} adminga yuborildi")
     except Exception as e:
         logging.error(f"Adminga xabar yuborishda xatolik: {e}")
