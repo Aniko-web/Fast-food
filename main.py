@@ -90,6 +90,15 @@ def init_db():
                    )
         )''')
 
+    # Eski jadvalga phone ustunini qo'shish (agar yo'q bo'lsa)
+    try:
+        cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT")
+        conn.commit()
+        logging.info("Phone ustuni qo'shildi")
+    except sqlite3.OperationalError:
+        # Ustun allaqachon mavjud
+        pass
+
     conn.commit()
     conn.close()
 
@@ -539,28 +548,32 @@ async def process_location(message: Message, state: FSMContext):
                  total,
                  datetime.now().strftime("%Y-%m-%d %H:%M"),
                  "yangi"))
+    order_id = cur.lastrowid
     conn.commit()
     conn.close()
 
+    # Foydalanuvchiga xabar
     await message.answer(
         "✅ Buyurtmangiz qabul qilindi! 🎉\n"
         "⏰ Operator tez orada siz bilan bog'lanadi.\n\n"
+        f"📦 Buyurtma raqami: #{order_id}\n"
         f"{order_text}",
         reply_markup=main_menu_keyboard()
     )
 
     # Adminga xabar yuborish
     try:
-        await bot.send_location(ADMIN_ID, location.latitude, location.longitude)
         admin_text = (
-            "📦 Yangi buyurtma!\n\n"
-            f"👤 Foydalanuvchi: @{message.from_user.username or 'Noma\'lum'}\n"
+            "🔔 YANGI BUYURTMA!\n\n"
+            f"📦 Buyurtma #{order_id}\n"
+            f"👤 @{message.from_user.username or 'Noma\'lum'}\n"
             f"🆔 ID: {message.from_user.id}\n"
-            f"📱 Telefon: {phone}\n"
-            f"📍 Lokatsiya yuqorida\n\n"
+            f"📱 Tel: {phone}\n\n"
             f"{order_text}"
         )
         await bot.send_message(ADMIN_ID, admin_text)
+        await bot.send_location(ADMIN_ID, location.latitude, location.longitude)
+        logging.info(f"Buyurtma #{order_id} adminga yuborildi")
     except Exception as e:
         logging.error(f"Adminga xabar yuborishda xatolik: {e}")
 
@@ -616,5 +629,4 @@ async def main():
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())
