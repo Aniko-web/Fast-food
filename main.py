@@ -27,6 +27,9 @@ router = Router()
 # FSM States - Buyurtma jarayoni uchun
 class OrderStates(StatesGroup):
     waiting_for_contact = State()
+    waiting_for_payment_method = State()
+    waiting_for_card_number = State()
+    waiting_for_receipt = State()
     waiting_for_location = State()
 
 
@@ -71,6 +74,10 @@ def init_db():
                        date
                        TEXT,
                        status
+                       TEXT,
+                       payment_method
+                       TEXT,
+                       card_number
                        TEXT
                    )''')
 
@@ -90,13 +97,23 @@ def init_db():
                    )
         )''')
 
-    # Eski jadvalga phone ustunini qo'shish (agar yo'q bo'lsa)
+    # Yangi ustunlarni qo'shish (agar yo'q bo'lsa)
     try:
         cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT")
         conn.commit()
-        logging.info("Phone ustuni qo'shildi")
     except sqlite3.OperationalError:
-        # Ustun allaqachon mavjud
+        pass
+
+    try:
+        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE orders ADD COLUMN card_number TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
         pass
 
     conn.commit()
@@ -216,10 +233,30 @@ def contact_keyboard():
     return kb
 
 
+def payment_method_keyboard():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Plastik karta", callback_data="pay_card")],
+        [InlineKeyboardButton(text="💵 Naqd pul", callback_data="pay_cash")],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_order")]
+    ])
+    return kb
+
+
 def location_keyboard():
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📍 Joylashuvni yuborish", request_location=True)],
+            [KeyboardButton(text="❌ Bekor qilish")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    return kb
+
+
+def skip_keyboard():
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
             [KeyboardButton(text="❌ Bekor qilish")]
         ],
         resize_keyboard=True,
@@ -337,7 +374,7 @@ async def view_orders(message: Message):
 
     conn = sqlite3.connect('fastfood.db')
     cur = conn.cursor()
-    cur.execute("""SELECT id, username, phone, items, total, date, status
+    cur.execute("""SELECT id, username, phone, items, total, date, status, payment_method
                    FROM orders
                    ORDER BY id DESC LIMIT 10""")
     orders = cur.fetchall()
@@ -348,13 +385,14 @@ async def view_orders(message: Message):
         return
 
     text = "📦 So'ngi 10 ta buyurtma:\n\n"
-    for order_id, username, phone, items, total, date, status in orders:
+    for order_id, username, phone, items, total, date, status, payment in orders:
         status_emoji = "🔄" if status == "yangi" else "✅"
+        payment_emoji = "💳" if payment == "karta" else "💵"
         text += (
             f"{status_emoji} #{order_id} - @{username}\n"
             f"   📱 {phone}\n"
             f"   {items}\n"
-            f"   💰 {total:,} so'm | 📅 {date}\n\n".replace(',', ' ')
+            f"   💰 {total:,} so'm | {payment_emoji} {payment or 'naqd'} | 📅 {date}\n\n".replace(',', ' ')
         )
 
     await message.answer(text)
@@ -448,6 +486,43 @@ async def confirm_order_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "pay_card")
+async def payment_card(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(OrderStates.waiting_for_card_number)
+
+    await callback.message.answer(
+        "💳 Plastik karta to'lovini tanladingiz\n\n"
+        "Iltimos, karta raqamingizni kiriting:\n"
+        "(masalan: 8600 1234 5678 9012)",
+        reply_markup=skip_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "pay_cash")
+async def payment_cash(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(payment_method="naqd", card_number=None)
+    await state.set_state(OrderStates.waiting_for_location)
+
+    await callback.message.answer(
+        "💵 Naqd pul to'lovini tanladingiz\n\n"
+        "📍 Endi yetkazib berish manzilini yuboring:",
+        reply_markup=location_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_order")
+async def cancel_order_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ Buyurtma bekor qilindi\n\n"
+        "Menyuga qaytish uchun quyidagi tugmani bosing 👇",
+        reply_markup=main_menu_keyboard()
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "back_menu")
 async def back_to_menu(callback: CallbackQuery):
     await callback.message.edit_text(
@@ -458,7 +533,7 @@ async def back_to_menu(callback: CallbackQuery):
     await callback.answer()
 
 
-# ============= CONTACT VA LOCATION HANDLERS =============
+# ============= CONTACT VA PAYMENT HANDLERS =============
 
 @router.message(OrderStates.waiting_for_contact, F.contact)
 async def process_contact(message: Message, state: FSMContext):
@@ -466,12 +541,12 @@ async def process_contact(message: Message, state: FSMContext):
 
     # Telefon raqamni state ga saqlash
     await state.update_data(phone=phone)
-    await state.set_state(OrderStates.waiting_for_location)
+    await state.set_state(OrderStates.waiting_for_payment_method)
 
     await message.answer(
         f"✅ Telefon raqam qabul qilindi: {phone}\n\n"
-        "📍 Endi yetkazib berish manzilini yuboring:",
-        reply_markup=location_keyboard()
+        "💳 To'lov turini tanlang:",
+        reply_markup=payment_method_keyboard()
     )
 
 
@@ -486,7 +561,7 @@ async def process_phone_text(message: Message, state: FSMContext):
         )
         return
 
-    # Telefon raqamni tekshirish (oddiy format)
+    # Telefon raqamni tekshirish
     phone = message.text.strip()
     if len(phone) < 9:
         await message.answer(
@@ -499,20 +574,84 @@ async def process_phone_text(message: Message, state: FSMContext):
 
     # Telefon raqamni state ga saqlash
     await state.update_data(phone=phone)
-    await state.set_state(OrderStates.waiting_for_location)
+    await state.set_state(OrderStates.waiting_for_payment_method)
 
     await message.answer(
         f"✅ Telefon raqam qabul qilindi: {phone}\n\n"
+        "💳 To'lov turini tanlang:",
+        reply_markup=payment_method_keyboard()
+    )
+
+
+@router.message(OrderStates.waiting_for_card_number, F.text)
+async def process_card_number(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer(
+            "❌ Bekor qilindi\n\n"
+            "Menyuga qaytish uchun /menu ni bosing",
+            reply_markup=main_menu_keyboard()
+        )
+        return
+
+    card_number = message.text.strip()
+
+    # Karta raqamni oddiy tekshirish
+    card_digits = ''.join(filter(str.isdigit, card_number))
+    if len(card_digits) < 16:
+        await message.answer(
+            "❌ Noto'g'ri karta raqami!\n\n"
+            "Iltimos, to'liq 16 raqamli karta raqamini kiriting\n"
+            "(masalan: 8600 1234 5678 9012)",
+            reply_markup=skip_keyboard()
+        )
+        return
+
+    # Karta ma'lumotlarini saqlash
+    await state.update_data(payment_method="karta", card_number=card_number)
+    await state.set_state(OrderStates.waiting_for_receipt)
+
+    await message.answer(
+        "✅ Karta raqami qabul qilindi\n\n"
+        "📸 Iltimos, to'lov chekini (screenshot) yuboring:",
+        reply_markup=skip_keyboard()
+    )
+
+
+@router.message(OrderStates.waiting_for_receipt, F.photo)
+async def process_receipt_photo(message: Message, state: FSMContext):
+    # Chek rasmini saqlash
+    photo_id = message.photo[-1].file_id
+    await state.update_data(receipt_photo=photo_id)
+    await state.set_state(OrderStates.waiting_for_location)
+
+    await message.answer(
+        "✅ To'lov cheki qabul qilindi!\n\n"
         "📍 Endi yetkazib berish manzilini yuboring:",
         reply_markup=location_keyboard()
     )
 
+
+@router.message(OrderStates.waiting_for_receipt, F.text == "❌ Bekor qilish")
+async def cancel_receipt(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "❌ Bekor qilindi\n\n"
+        "Menyuga qaytish uchun /menu ni bosing",
+        reply_markup=main_menu_keyboard()
+    )
+
+
+# ============= LOCATION VA BUYURTMANI YAKUNLASH =============
 
 @router.message(OrderStates.waiting_for_location, F.location)
 async def process_location(message: Message, state: FSMContext):
     data = await state.get_data()
     items = data.get('order_items', [])
     phone = data.get('phone', 'Kiritilmagan')
+    payment_method = data.get('payment_method', 'naqd')
+    card_number = data.get('card_number')
+    receipt_photo = data.get('receipt_photo')
 
     if not items:
         await message.answer(
@@ -539,25 +678,30 @@ async def process_location(message: Message, state: FSMContext):
     # Ma'lumotlar bazasiga saqlash
     conn = sqlite3.connect('fastfood.db')
     cur = conn.cursor()
-    cur.execute("""INSERT INTO orders (user_id, username, phone, items, total, date, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+    cur.execute(
+        """INSERT INTO orders (user_id, username, phone, items, total, date, status, payment_method, card_number)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (message.from_user.id,
                  message.from_user.username or "Noma'lum",
                  phone,
                  ", ".join(items_list),
                  total,
                  datetime.now().strftime("%Y-%m-%d %H:%M"),
-                 "yangi"))
+                 "yangi",
+                 payment_method,
+                 card_number))
     order_id = cur.lastrowid
     conn.commit()
     conn.close()
 
     # Foydalanuvchiga xabar
+    payment_text = "💳 Plastik karta" if payment_method == "karta" else "💵 Naqd pul"
     await message.answer(
         "✅ Buyurtmangiz qabul qilindi! 🎉\n"
         "⏰ Operator tez orada siz bilan bog'lanadi.\n\n"
         f"📦 Buyurtma raqami: #{order_id}\n"
-        f"{order_text}",
+        f"{order_text}\n"
+        f"💳 To'lov turi: {payment_text}",
         reply_markup=main_menu_keyboard()
     )
 
@@ -568,11 +712,26 @@ async def process_location(message: Message, state: FSMContext):
             f"📦 Buyurtma #{order_id}\n"
             f"👤 @{message.from_user.username or 'Noma\'lum'}\n"
             f"🆔 ID: {message.from_user.id}\n"
-            f"📱 Tel: {phone}\n\n"
-            f"{order_text}"
+            f"📱 Tel: {phone}\n"
+            f"💳 To'lov: {payment_text}\n"
         )
+
+        if payment_method == "karta" and card_number:
+            admin_text += f"💳 Karta: {card_number}\n"
+
+        admin_text += f"\n{order_text}"
+
         await bot.send_message(ADMIN_ID, admin_text)
         await bot.send_location(ADMIN_ID, location.latitude, location.longitude)
+
+        # Agar chek yuborilgan bo'lsa, uni ham adminga yuborish
+        if receipt_photo:
+            await bot.send_photo(
+                ADMIN_ID,
+                receipt_photo,
+                caption=f"📸 To'lov cheki - Buyurtma #{order_id}"
+            )
+
         logging.info(f"Buyurtma #{order_id} adminga yuborildi")
     except Exception as e:
         logging.error(f"Adminga xabar yuborishda xatolik: {e}")
